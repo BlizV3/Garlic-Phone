@@ -40,10 +40,15 @@ class GameClient:
 
     def connect(self, host: str, port: int = 8765):
         """
-        Connect to the server. Call this once before anything else.
-        Runs the event loop on a daemon thread so it doesn't block the UI.
+        Connect to the server.
+        - host can be a full URL like "wss://garlic-phone.onrender.com"
+        - or a plain IP/hostname like "192.168.1.5" (uses ws:// + port)
         """
-        uri = f"ws://{host}:{port}"
+        if host.startswith("wss://") or host.startswith("ws://"):
+            uri = host   # already a full URL
+        else:
+            uri = f"ws://{host}:{port}"
+
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._run_loop,

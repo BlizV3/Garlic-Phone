@@ -311,14 +311,14 @@ class MainWindow(QMainWindow):
             self._gear_btn.raise_()
 
     def _on_test_mode(self):
-        """Launch a solo single-player test session to exercise the full game loop."""
+        """Launch a solo single-player test session — always uses local server."""
         self._is_host      = True
         self._my_username  = "Tester"
         self._max_players  = 1
         self._require_code = False
         self._avatar_b64   = ""
         self._test_mode    = True
-        self._start_server()
+        self._start_server()   # always local for test mode
         QTimer.singleShot(600, lambda: self._connect_client("127.0.0.1", is_host=True, test_mode=True))
 
     def _on_window_mode(self, mode: str):
@@ -440,8 +440,16 @@ class MainWindow(QMainWindow):
         self._max_players  = max_players
         self._require_code = require_code
         self._avatar_b64   = avatar_b64
-        self._start_server()
-        QTimer.singleShot(600, lambda: self._connect_client("127.0.0.1", is_host=True))
+
+        from app.config import RENDER_URL
+        if RENDER_URL:
+            # Render mode — no local server, connect directly to Render
+            log.info(f"Render mode — connecting to {RENDER_URL}")
+            self._connect_client(RENDER_URL, is_host=True)
+        else:
+            # Local mode — start embedded server then connect
+            self._start_server()
+            QTimer.singleShot(600, lambda: self._connect_client("127.0.0.1", is_host=True))
 
     def _start_server(self):
         from app.backend.server import start_server, reset_server
@@ -479,6 +487,10 @@ class MainWindow(QMainWindow):
         self._my_username  = username
         self._pending_code = code
         self._avatar_b64   = avatar_b64
+
+        from app.config import RENDER_URL
+        connect_addr = RENDER_URL if RENDER_URL else host_ip
+
         self._client = GameClient()
         self._client.on(msg.ROOM_JOINED,       lambda p: self._sig_room_joined.emit(p))
         self._client.on(msg.PLAYER_JOINED,     lambda p: self._sig_player_joined.emit(p))
@@ -491,7 +503,7 @@ class MainWindow(QMainWindow):
         self._client.on(msg.SUBMISSION_ACK,   lambda p: self._sig_submission_ack.emit(p))
         self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
         self._client.on("connected",           lambda p: self._on_guest_connected(p))
-        self._client.connect(host_ip, self.PORT)
+        self._client.connect(connect_addr, self.PORT)
 
     def _on_guest_connected(self, _):
         self._client.join_room(self._pending_code, self._my_username, self._avatar_b64)

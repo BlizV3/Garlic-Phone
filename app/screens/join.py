@@ -238,11 +238,20 @@ class JoinScreen(QWidget):
         card_layout.addLayout(profile_row)
         card_layout.addWidget(make_divider())
 
-        # ── Host IP ────────────────────────────────────────────────────────
+        # ── Host IP / Server address ───────────────────────────────────────
+        from app.config import RENDER_URL
         self._host_input = make_input("e.g.  192.168.1.42")
+        if RENDER_URL:
+            self._host_input.setText(RENDER_URL)
+            self._host_input.setEnabled(False)
+            server_subtitle = "Connected to Render server (set in app/config.py)"
+            server_title    = "SERVER (RENDER)"
+        else:
+            server_subtitle = "The local IP of the person hosting the room"
+            server_title    = "HOST IP ADDRESS"
         card_layout.addLayout(make_setting_row(
-            "HOST IP ADDRESS",
-            "The local IP of the person hosting the room",
+            server_title,
+            server_subtitle,
             self._host_input
         ))
         card_layout.addWidget(make_divider())
@@ -321,7 +330,8 @@ class JoinScreen(QWidget):
 
     def _on_join(self):
         self.clear_error()
-        host = self._host_input.text().strip()
+        from app.config import RENDER_URL
+        host = RENDER_URL if RENDER_URL else self._host_input.text().strip()
         code = self._code_input.text().strip()
         name = self._name_input.text().strip()
         if not host:
