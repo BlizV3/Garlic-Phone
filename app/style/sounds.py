@@ -89,7 +89,7 @@ class SoundManager:
         try:
             self._pygame.mixer.music.load(path)
             self._pygame.mixer.music.set_volume(self._music_volume)
-            self._pygame.mixer.music.play(loops=-1, fade_ms=1000)
+            self._pygame.mixer.music.play(loops=-1)
             self._current_track = filename
             log.info(f"Music: {filename}")
         except Exception as e:

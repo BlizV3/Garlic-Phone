@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         from app.config import RENDER_URL
         if RENDER_URL:
             # Render mode — no local server, connect directly to Render
-            log.info(f"Render mode — connecting to {RENDER_URL}")
+            print(f"[CLIENT] Render mode — connecting to {RENDER_URL}")
             self._connect_client(RENDER_URL, is_host=True)
         else:
             # Local mode — start embedded server then connect
@@ -455,9 +455,15 @@ class MainWindow(QMainWindow):
         from app.backend.server import start_server, reset_server
         reset_server()   # wipe any stale global state before starting fresh
         def run():
-            self._server_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._server_loop)
-            self._server_loop.run_until_complete(start_server())
+            import sys
+            # ProactorEventLoop (Windows default) crashes with websockets — use Selector
+            if sys.platform == "win32":
+                loop = asyncio.SelectorEventLoop()
+            else:
+                loop = asyncio.new_event_loop()
+            self._server_loop = loop
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(start_server())
         t = threading.Thread(target=run, daemon=True, name="GameServer")
         self._server_thread = t
         t.start()
@@ -737,7 +743,6 @@ class MainWindow(QMainWindow):
 
         self._disconnect_client()
         event.accept()
-        import sys; sys.exit(0)
 
     def _disconnect_client(self):
         if self._client:
