@@ -23,9 +23,18 @@ ORANGE_HOV = "#FB923C"
 RED        = "rgba(239,68,68,0.80)"
 RED_HOV    = "rgba(239,68,68,0.95)"
 
-# Where photos are stored inside the project folder
-PHOTOS_DIR  = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "photos")
-META_FILE   = os.path.join(PHOTOS_DIR, "meta.json")
+import sys
+
+# Photos live next to the .exe when frozen, or in project root in dev
+if getattr(sys, "frozen", False):
+    # Bundled — store next to the .exe so photos persist between runs
+    _app_dir = os.path.dirname(sys.executable)
+else:
+    # Development — store in project root
+    _app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+
+PHOTOS_DIR = os.path.join(_app_dir, "photos")
+META_FILE  = os.path.join(PHOTOS_DIR, "meta.json")
 
 os.makedirs(PHOTOS_DIR, exist_ok=True)
 

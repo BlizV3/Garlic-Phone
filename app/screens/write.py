@@ -15,13 +15,10 @@ TEXT_DIM   = "#E0F2FE"
 ORANGE     = "#F97316"
 ORANGE_HOV = "#FB923C"
 
-ASSETS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "assets"
-)
+from app.paths import asset as _asset_fn
 
 def _load(name: str, size: int) -> QPixmap:
-    path = os.path.join(ASSETS_DIR, "icons", name)
+    path = _asset_fn("icons", name)
     px   = QPixmap(path)
     if px.isNull():
         return QPixmap()
@@ -64,10 +61,8 @@ class TimerRing(QWidget):
     def _start_panic(self):
         self._in_panic = True
         try:
-            import pygame.mixer as mx, os
-            path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "assets", "music", "clock_ticking.mp3")
+            import pygame.mixer as mx
+            path = _asset_fn("music", "clock_ticking.mp3")
             mx.music.load(path)
             mx.music.play(-1)
         except Exception:
@@ -418,10 +413,7 @@ if __name__ == "__main__":
     class _BG(QWidget):
         def __init__(self):
             super().__init__()
-            path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "assets", "background", "default.png"
-            )
+            path = _asset_fn("background", "default.png")
             self._px = QPixmap(path)
 
         def paintEvent(self, event):

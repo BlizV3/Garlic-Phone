@@ -8,12 +8,10 @@ import logging
 
 log = logging.getLogger(__name__)
 
-ASSETS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "assets")
-SOUNDS_DIR = os.path.join(ASSETS_DIR, "sounds")
-MUSIC_DIR  = os.path.join(ASSETS_DIR, "music")
+from app.paths import asset
 
-def _sound_path(f): return os.path.join(SOUNDS_DIR, f)
-def _music_path(f): return os.path.join(MUSIC_DIR,  f)
+def _sound_path(f): return asset("sounds", f)
+def _music_path(f): return asset("music",  f)
 
 
 class SoundManager:

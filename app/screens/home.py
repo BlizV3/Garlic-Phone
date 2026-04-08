@@ -15,13 +15,10 @@ BTN_BORDER_HOV = "rgba(255,255,255,0.9)"
 TEXT_LIGHT     = "#FFFFFF"
 TEXT_DIM       = "#E0F2FE"
 
-ASSETS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "assets"
-)
+from app.paths import asset as _asset
 
 def load_icon(name: str, size: int = 80) -> QPixmap:
-    path = os.path.join(ASSETS_DIR, "icons", name)
+    path = _asset("icons", name)
     px   = QPixmap(path)
     if px.isNull():
         return QPixmap()
@@ -135,18 +132,17 @@ class HomeScreen(QWidget):
         S = ui_scale.get()
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(0, 16, 0, 0)
         root.setSpacing(0)
 
         # Thumbnail image replacing text title
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title.setStyleSheet("background: transparent;")
-        thumb_px = load_icon("thumbnail.png", int(420 * S))
+        thumb_px = load_icon("thumbnail.png", int(280 * S))
         if not thumb_px.isNull():
             self.title.setPixmap(thumb_px)
         else:
-            # Fallback to text if image missing
             self.title.setText("🧄 GARLIC PHONE")
             self.title.setStyleSheet(f"""
                 color: {TEXT_LIGHT};
@@ -155,7 +151,7 @@ class HomeScreen(QWidget):
                 letter-spacing: 4px;
                 background: transparent;
             """)
-        root.addWidget(self.title, stretch=1)
+        root.addWidget(self.title)
 
         # Outer container — cards + free draw button share margins
         outer_container = QWidget()
@@ -295,7 +291,7 @@ class HomeScreen(QWidget):
         gap      = int(16 * S)
 
         # Rescale thumbnail to fit available width
-        avail_w = max(200, int(self.width() * 0.25))
+        avail_w = max(150, int(self.width() * 0.28))
         thumb_px = load_icon("thumbnail.png", avail_w)
         if not thumb_px.isNull():
             self.title.setPixmap(thumb_px)

@@ -6,22 +6,17 @@ from PyQt6.QtGui import (
     QColor, QPainter, QBrush, QPen, QPixmap,
     QFont, QCursor, QPainterPath
 )
+from app.paths import asset
 
 TEXT_LIGHT = "#FFFFFF"
 
-AVATARS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "assets", "avatars"
-)
-
 AVATAR_FILES = [
-    "default.png",
-    "cat.png",
-    "dog.png",
-    "hamster.png",
-    "minion.png",
-    "rabbit.png",
+    "default.png", "cat.png", "dog.png",
+    "hamster.png", "minion.png", "rabbit.png",
 ]
+
+def _avatar_path(f):
+    return asset("avatars", f)
 
 
 class AvatarPicker(QWidget):
@@ -57,7 +52,7 @@ class AvatarPicker(QWidget):
 
     def _load_avatar(self, index: int):
         self._index = index % len(AVATAR_FILES)
-        path = os.path.join(AVATARS_DIR, AVATAR_FILES[self._index])
+        path = _avatar_path(AVATAR_FILES[self._index])
         px = QPixmap(path)
         if px.isNull():
             self._raw_pixmap = None

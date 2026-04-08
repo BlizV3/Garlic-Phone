@@ -3,7 +3,7 @@
 # Example: "wss://garlic-phone-server.onrender.com"
 # Leave as empty string to use local server mode (LAN play).
 
-RENDER_URL = ""   # ← paste your Render URL here after deploying
+RENDER_URL = "wss://garlic-phone.onrender.com"   # ← paste your Render URL here after deploying
 
 # Port used for local server mode
 LOCAL_PORT = 8765
