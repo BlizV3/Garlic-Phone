@@ -29,7 +29,10 @@ PORT = int(os.environ.get("PORT", 8765))   # Render injects $PORT automatically
 async def main():
     server = GameServer()
     log.info(f"Starting Garlic Phone server on {HOST}:{PORT}")
-    async with websockets.serve(server.handle_connection, HOST, PORT):
+    async with websockets.serve(
+        server.handle_connection, HOST, PORT,
+        max_size=10 * 1024 * 1024,   # 10 MB
+    ):
         log.info(f"Server listening on port {PORT}")
         await asyncio.Future()   # run forever
 

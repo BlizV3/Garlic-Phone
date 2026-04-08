@@ -22,6 +22,26 @@ class GameServer:
         # Each connection maps to (player_id, room_code)
         self.connections: dict[WebSocketServerProtocol, tuple[str, str]] = {}
 
+    async def _detect_country(self, websocket) -> str:
+        """Detect country from the websocket's remote IP. Returns flag emoji + country name."""
+        try:
+            ip = websocket.remote_address[0]
+            if ip in ("127.0.0.1", "::1") or ip.startswith("10.") or ip.startswith("192.168."):
+                return "🏠 Local"
+            import urllib.request
+            with urllib.request.urlopen(
+                f"https://ipapi.co/{ip}/json/", timeout=3
+            ) as resp:
+                import json
+                data = json.loads(resp.read())
+                country = data.get("country_name", "")
+                # Convert country code to flag emoji
+                code = data.get("country_code", "")
+                flag = "".join(chr(0x1F1E6 + ord(c) - ord('A')) for c in code.upper()) if len(code) == 2 else ""
+                return f"{flag} {country}".strip()
+        except Exception:
+            return ""
+
     # ── Helpers ────────────────────────────────────────────────────────────────
 
     def _get_room(self, websocket) -> Room | None:
@@ -136,6 +156,7 @@ class GameServer:
             msg.SUBMIT_DRAWING:  self.on_submit_drawing,
             msg.HOST_CONTINUE:   self.on_host_continue,
             msg.HOST_NEXT:       self.on_host_next,
+            msg.REQUEST_ROOMS:   self.on_request_rooms,
         }
 
         handler = handlers.get(msg_type)
@@ -145,10 +166,21 @@ class GameServer:
             except Exception as e:
                 log.error(f"Exception in handler [{msg_type}]: {e}")
                 log.error(traceback.format_exc())
-                try:
-                    await websocket.send(msg.msg_error(f"Server error: {e}"))
-                except Exception:
-                    pass
+                # Find the room and kick everyone back to home
+                _, room = self._get_player_room(websocket)
+                if room:
+                    try:
+                        await self.broadcast(room, msg.msg_game_error(
+                            f"A server error occurred — everyone has been returned to the home screen."
+                        ))
+                    except Exception:
+                        pass
+                    self._close_room(room)
+                else:
+                    try:
+                        await websocket.send(msg.msg_error(f"Server error: {e}"))
+                    except Exception:
+                        pass
         else:
             await websocket.send(msg.msg_error(f"Unknown message type: {msg_type}"))
 
@@ -161,7 +193,6 @@ class GameServer:
                       avatar=payload.get("avatar", ""),
                       is_host=True)
 
-        # Generate a unique room code
         for _ in range(20):
             room_code = str(uuid.uuid4())[:6].upper()
             if room_code not in self.rooms:
@@ -169,7 +200,12 @@ class GameServer:
 
         room = Room(code=room_code, host_id=player_id)
         room.add_player(host)
-        room.test_mode = payload.get("test_mode", False)
+        room.test_mode     = payload.get("test_mode", False)
+        room.max_players   = payload.get("max_players", 8)
+        room.requires_code = payload.get("requires_code", False)
+
+        # Detect host country from IP (best-effort, no API key needed)
+        room.host_country = await self._detect_country(websocket)
 
         self.rooms[room_code] = room
         self.connections[websocket] = (player_id, room_code)
@@ -299,6 +335,25 @@ class GameServer:
             await self._broadcast_current_phase(room)
         else:
             await self._show_results(room)
+
+    async def on_request_rooms(self, websocket, payload):
+        """Send the client a list of all open lobby rooms."""
+        rooms_data = []
+        for code, room in self.rooms.items():
+            if room.phase != GamePhase.LOBBY:
+                continue   # only show rooms still in lobby
+            host = room.players.get(room.host_id)
+            rooms_data.append({
+                "code":         code,
+                "host_username": host.username if host else "?",
+                "host_avatar":   host.avatar   if host else "",
+                "player_count":  room.player_count(),
+                "max_players":   getattr(room, "max_players", 8),
+                "requires_code": getattr(room, "requires_code", False),
+                "country":       getattr(room, "host_country", ""),
+            })
+        await websocket.send(msg.msg_room_list(rooms_data))
+        log.info(f"Sent room list ({len(rooms_data)} open rooms)")
 
     async def on_host_next(self, websocket, payload):
         player_id, room = self._get_player_room(websocket)
@@ -443,7 +498,10 @@ async def start_server():
     global _server_instance
     _server_instance = GameServer()
     log.info(f"Starting server on {HOST}:{PORT}")
-    async with websockets.serve(_server_instance.handle_connection, HOST, PORT):
+    async with websockets.serve(
+        _server_instance.handle_connection, HOST, PORT,
+        max_size=10 * 1024 * 1024,   # 10 MB — plenty for any drawing
+    ):
         log.info(f"server listening on {HOST}:{PORT}")
         log.info(f"Server is running. Share your local IP + port {PORT} with players.")
         await asyncio.Future()

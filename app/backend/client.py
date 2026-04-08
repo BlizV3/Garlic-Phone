@@ -123,8 +123,13 @@ class GameClient:
 
     # ── Public API (called by the UI) ─────────────────────────────────────────
 
-    def create_room(self, username: str, avatar: str = "", test_mode: bool = False):
-        self._send(msg.msg_create_room(username, avatar, test_mode=test_mode))
+    def create_room(self, username: str, avatar: str = "", test_mode: bool = False,
+                    max_players: int = 8, requires_code: bool = False):
+        self._send(msg.msg_create_room(username, avatar, test_mode=test_mode,
+                                       max_players=max_players, requires_code=requires_code))
+
+    def request_rooms(self):
+        self._send(msg.msg_request_rooms())
 
     def join_room(self, code: str, username: str, avatar: str = ""):
         self._send(msg.msg_join_room(code, username, avatar))

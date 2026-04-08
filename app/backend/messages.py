@@ -8,6 +8,9 @@ SUBMIT_SENTENCE  = "submit_sentence"
 SUBMIT_DRAWING   = "submit_drawing"
 HOST_CONTINUE    = "host_continue"    # host decides continue/stop in endless mode
 HOST_NEXT        = "host_next"        # host skips to next chain in results
+GAME_ERROR       = "game_error"       # fatal error — all players return to home
+REQUEST_ROOMS    = "request_rooms"    # client asks for room list
+ROOM_LIST        = "room_list"        # server sends room list
 
 # ── Server → Client ────────────────────────────────────────────────────────────
 ROOM_CREATED      = "room_created"
@@ -35,8 +38,11 @@ def parse(raw: str) -> tuple[str, dict]:
 
 # ── Client → Server builders ───────────────────────────────────────────────────
 
-def msg_create_room(username: str, avatar: str = "", test_mode: bool = False) -> str:
-    return build(CREATE_ROOM, username=username, avatar=avatar, test_mode=test_mode)
+def msg_create_room(username: str, avatar: str = "", test_mode: bool = False,
+                    max_players: int = 8, requires_code: bool = False) -> str:
+    return build(CREATE_ROOM, username=username, avatar=avatar,
+                 test_mode=test_mode, max_players=max_players,
+                 requires_code=requires_code)
 
 def msg_join_room(code: str, username: str, avatar: str = "") -> str:
     return build(JOIN_ROOM, code=code, username=username, avatar=avatar)
@@ -57,6 +63,16 @@ def msg_host_continue(action: str) -> str:
 def msg_host_next() -> str:
     """Broadcast from server: skip to next chain in results."""
     return build(HOST_NEXT)
+
+def msg_game_error(reason: str) -> str:
+    """Broadcast from server: fatal error, all players return to home."""
+    return build(GAME_ERROR, reason=reason)
+
+def msg_request_rooms() -> str:
+    return build(REQUEST_ROOMS)
+
+def msg_room_list(rooms: list) -> str:
+    return build(ROOM_LIST, rooms=rooms)
 
 
 # ── Server → Client builders ───────────────────────────────────────────────────

@@ -9,7 +9,6 @@ from PyQt6.QtGui import QColor, QPixmap, QPainter, QCursor
 
 from app.screens.home   import HomeScreen
 from app.screens.create import CreateScreen
-from app.screens.join   import JoinScreen
 from app.screens.lobby  import LobbyScreen
 from app.backend.client import GameClient
 from app.backend        import messages as msg
@@ -39,6 +38,8 @@ class MainWindow(QMainWindow):
     _sig_host_decision     = pyqtSignal()
     _sig_submission_ack    = pyqtSignal(dict)
     _sig_host_next         = pyqtSignal()
+    _sig_game_error        = pyqtSignal(dict)
+    _sig_room_list         = pyqtSignal(dict)
 
     PORT     = 8765
     ASPECT_W = 1282
@@ -87,6 +88,9 @@ class MainWindow(QMainWindow):
         self._game_settings   = {}
         self._in_game_phase   = False
         self._gear_visible    = True
+        self._browser_client  = None
+        self._pending_code    = ""
+        self._pending_req_code = False
         self._max_players     = 8
         self._require_code    = True
         self._pending_code    = ""
@@ -100,10 +104,8 @@ class MainWindow(QMainWindow):
         class BackgroundWidget(QWidget):
             def __init__(self, parent=None):
                 super().__init__(parent)
-                path = os.path.join(
-                    os.path.dirname(os.path.dirname(__file__)),
-                    "assets", "background", "default.png"
-                )
+                from app.paths import asset
+                path = asset("background", "default.png")
                 self._bg = QPixmap(path)
 
             def paintEvent(self, event):
@@ -185,23 +187,32 @@ class MainWindow(QMainWindow):
         self._settings_panel.hide()
 
         # ── Screens ───────────────────────────────────────────────────────
-        self.home_screen   = HomeScreen()
-        self.create_screen = CreateScreen()
-        self.join_screen   = JoinScreen()
+        from app.screens.server_browser import ServerBrowserScreen
+        from app.screens.profile import ProfileScreen
+
+        self.home_screen    = HomeScreen()
+        self.create_screen  = CreateScreen()
+        self.browser_screen = ServerBrowserScreen()
+        self.profile_screen = ProfileScreen()
 
         self._stack.addWidget(self.home_screen)
         self._stack.addWidget(self.create_screen)
-        self._stack.addWidget(self.join_screen)
+        self._stack.addWidget(self.browser_screen)
+        self._stack.addWidget(self.profile_screen)
 
         # ── Screen signals ─────────────────────────────────────────────────
         self.home_screen.create_clicked.connect(self._go_create)
-        self.home_screen.join_clicked.connect(self._go_join)
+        self.home_screen.join_clicked.connect(self._go_browser)
         self.home_screen.free_draw_clicked.connect(self._go_free_draw)
         self.home_screen.photos_clicked.connect(self._go_photos)
         self.create_screen.back_requested.connect(self._go_home)
         self.create_screen.create_requested.connect(self._on_create_requested)
-        self.join_screen.back_requested.connect(self._go_home)
-        self.join_screen.join_requested.connect(self._on_join_requested)
+        self.browser_screen.back_requested.connect(self._go_home)
+        self.browser_screen.join_requested.connect(self._on_room_selected)
+        self.browser_screen.code_join.connect(self._on_code_join)
+        self.browser_screen.refresh_needed.connect(self._refresh_rooms)
+        self.profile_screen.back_requested.connect(self._go_browser)
+        self.profile_screen.confirmed.connect(self._on_profile_confirmed)
 
         # ── Backend signals ────────────────────────────────────────────────
         self._sig_room_created.connect(self._on_room_created)
@@ -215,6 +226,8 @@ class MainWindow(QMainWindow):
         self._sig_submission_ack.connect(self._on_submission_ack)
         self._sig_host_decision.connect(self._on_host_decision)
         self._sig_host_next.connect(self._on_host_next)
+        self._sig_game_error.connect(self._on_game_error)
+        self._sig_room_list.connect(self._on_room_list)
 
         self._go_home()
         self._sfx.play_music_home()
@@ -337,21 +350,96 @@ class MainWindow(QMainWindow):
     def _go_home(self):
         self._set_fullscreen_mode(False)
         self._leave_game_phase()
+        if self._browser_client:
+            try: self._browser_client.disconnect()
+            except: pass
+            self._browser_client = None
         self._disconnect_client()
         self._sfx.play_music_home()
         self._stack.setCurrentWidget(self.home_screen)
+
+    def _go_browser(self):
+        """Navigate to the server browser and fetch room list."""
+        self._sfx.play_music_home()
+        self._stack.setCurrentWidget(self.browser_screen)
+        self.browser_screen.set_status("Connecting to server...")
+        # Connect a temp client just to fetch room list
+        self._connect_browser_client()
+
+    def _connect_browser_client(self):
+        """Connect to Render just long enough to get the room list."""
+        from app.config import RENDER_URL
+        from app.backend.client import GameClient
+        if self._browser_client:
+            try: self._browser_client.disconnect()
+            except: pass
+        self._browser_client = GameClient()
+        self._browser_client.on(msg.ROOM_LIST,  lambda p: self._sig_room_list.emit(p))
+        self._browser_client.on(msg.ERROR,       lambda p: self.browser_screen.set_status("Connection error"))
+        self._browser_client.on("connected",     lambda p: self._browser_client.request_rooms())
+        addr = RENDER_URL if RENDER_URL else "127.0.0.1"
+        self._browser_client.connect(addr, self.PORT)
+
+    def _refresh_rooms(self):
+        if self._browser_client:
+            try:
+                self._browser_client.request_rooms()
+            except Exception:
+                self._connect_browser_client()
+        else:
+            self._connect_browser_client()
+
+    def _on_room_list(self, payload: dict):
+        rooms = payload.get("rooms", [])
+        self.browser_screen.update_rooms(rooms)
+
+    def _on_room_selected(self, code: str, requires_code: bool):
+        """Player clicked a room — go to profile screen."""
+        self._pending_code      = code
+        self._pending_req_code  = requires_code
+        self._stack.setCurrentWidget(self.profile_screen)
+
+    def _on_code_join(self, code: str):
+        """Player typed a code directly."""
+        self._pending_code      = code
+        self._pending_req_code  = True   # assume code required if typed manually
+        self._stack.setCurrentWidget(self.profile_screen)
+
+    def _on_profile_confirmed(self, username: str, avatar_b64: str):
+        """Profile done — actually connect and join the room."""
+        self._is_host     = False
+        self._my_username = username
+        self._avatar_b64  = avatar_b64
+
+        # Disconnect browser client
+        if self._browser_client:
+            try: self._browser_client.disconnect()
+            except: pass
+            self._browser_client = None
+
+        from app.config import RENDER_URL
+        connect_addr = RENDER_URL if RENDER_URL else "127.0.0.1"
+
+        self._client = GameClient()
+        self._client.on(msg.ROOM_JOINED,       lambda p: self._sig_room_joined.emit(p))
+        self._client.on(msg.PLAYER_JOINED,     lambda p: self._sig_player_joined.emit(p))
+        self._client.on(msg.PLAYER_LEFT,       lambda p: self._sig_player_left.emit(p))
+        self._client.on(msg.ERROR,             lambda p: self._sig_error.emit(p))
+        self._client.on(msg.HOST_DISCONNECTED, lambda p: self._sig_host_disconnected.emit())
+        self._client.on(msg.PHASE_CHANGED,     lambda p: self._sig_phase_changed.emit(p))
+        self._client.on(msg.SHOW_RESULTS,      lambda p: self._sig_show_results.emit(p))
+        self._client.on(msg.HOST_DECISION,     lambda p: self._sig_host_decision.emit())
+        self._client.on(msg.SUBMISSION_ACK,    lambda p: self._sig_submission_ack.emit(p))
+        self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
+        self._client.on(msg.GAME_ERROR,        lambda p: self._sig_game_error.emit(p))
+        self._client.on(msg.ROOM_LIST,         lambda p: self._sig_room_list.emit(p))
+        self._client.on("connected",           lambda p: self._on_guest_connected(p))
+        self._client.connect(connect_addr, self.PORT)
 
     def _go_create(self):
         self._sfx.play_click()
         self._sfx.play_music_home()
         self._stack.setCurrentWidget(self.create_screen)
-
-    def _go_join(self):
-        self._sfx.play_click()
-        self._sfx.play_music_home()
-        self.join_screen.clear_error()
-        self.join_screen.set_loading(False)
-        self._stack.setCurrentWidget(self.join_screen)
 
     def _go_lobby(self, is_host, room_code, max_players, require_code):
         if self._lobby:
@@ -425,10 +513,20 @@ class MainWindow(QMainWindow):
         self._leave_game_phase()
         import base64
         from PyQt6.QtCore import QByteArray, QBuffer
+
+        # Scale down if too large to keep payload manageable
+        MAX_DIM = 800
+        if pixmap.width() > MAX_DIM or pixmap.height() > MAX_DIM:
+            pixmap = pixmap.scaled(
+                MAX_DIM, MAX_DIM,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+
         ba  = QByteArray()
         buf = QBuffer(ba)
         buf.open(QBuffer.OpenModeFlag.WriteOnly)
-        pixmap.save(buf, "PNG")
+        pixmap.save(buf, "JPEG", 85)   # JPEG at 85% — far smaller than PNG
         b64 = base64.b64encode(ba.data()).decode("utf-8")
         if self._client:
             self._client.submit_drawing(b64)
@@ -444,7 +542,7 @@ class MainWindow(QMainWindow):
         from app.config import RENDER_URL
         if RENDER_URL:
             # Render mode — no local server, connect directly to Render
-            print(f"[CLIENT] Render mode — connecting to {RENDER_URL}")
+            print(f"Render mode — connecting to {RENDER_URL}")
             self._connect_client(RENDER_URL, is_host=True)
         else:
             # Local mode — start embedded server then connect
@@ -455,15 +553,9 @@ class MainWindow(QMainWindow):
         from app.backend.server import start_server, reset_server
         reset_server()   # wipe any stale global state before starting fresh
         def run():
-            import sys
-            # ProactorEventLoop (Windows default) crashes with websockets — use Selector
-            if sys.platform == "win32":
-                loop = asyncio.SelectorEventLoop()
-            else:
-                loop = asyncio.new_event_loop()
-            self._server_loop = loop
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(start_server())
+            self._server_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._server_loop)
+            self._server_loop.run_until_complete(start_server())
         t = threading.Thread(target=run, daemon=True, name="GameServer")
         self._server_thread = t
         t.start()
@@ -481,35 +573,19 @@ class MainWindow(QMainWindow):
         self._client.on(msg.HOST_DECISION,     lambda p: self._sig_host_decision.emit())
         self._client.on(msg.SUBMISSION_ACK,   lambda p: self._sig_submission_ack.emit(p))
         self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
+        self._client.on(msg.GAME_ERROR,        lambda p: self._sig_game_error.emit(p))
+        self._client.on(msg.ROOM_LIST,          lambda p: self._sig_room_list.emit(p))
         self._client.connect(host, self.PORT)
         if is_host:
             QTimer.singleShot(400, lambda: self._client.create_room(
-                self._my_username or "Host", self._avatar_b64, test_mode=test_mode))
+                self._my_username or "Host",
+                self._avatar_b64,
+                test_mode=test_mode,
+                max_players=getattr(self, "_max_players", 8),
+                requires_code=getattr(self, "_require_code", False),
+            ))
 
-    # ── Join flow ──────────────────────────────────────────────────────────
-
-    def _on_join_requested(self, host_ip, code, username, avatar_b64):
-        self._is_host      = False
-        self._my_username  = username
-        self._pending_code = code
-        self._avatar_b64   = avatar_b64
-
-        from app.config import RENDER_URL
-        connect_addr = RENDER_URL if RENDER_URL else host_ip
-
-        self._client = GameClient()
-        self._client.on(msg.ROOM_JOINED,       lambda p: self._sig_room_joined.emit(p))
-        self._client.on(msg.PLAYER_JOINED,     lambda p: self._sig_player_joined.emit(p))
-        self._client.on(msg.PLAYER_LEFT,       lambda p: self._sig_player_left.emit(p))
-        self._client.on(msg.ERROR,             lambda p: self._sig_error.emit(p))
-        self._client.on(msg.HOST_DISCONNECTED, lambda p: self._sig_host_disconnected.emit())
-        self._client.on(msg.PHASE_CHANGED,     lambda p: self._sig_phase_changed.emit(p))
-        self._client.on(msg.SHOW_RESULTS,      lambda p: self._sig_show_results.emit(p))
-        self._client.on(msg.HOST_DECISION,     lambda p: self._sig_host_decision.emit())
-        self._client.on(msg.SUBMISSION_ACK,   lambda p: self._sig_submission_ack.emit(p))
-        self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
-        self._client.on("connected",           lambda p: self._on_guest_connected(p))
-        self._client.connect(connect_addr, self.PORT)
+    # ── Join flow (now handled by browser + profile screens) ──────────────
 
     def _on_guest_connected(self, _):
         self._client.join_room(self._pending_code, self._my_username, self._avatar_b64)
@@ -535,7 +611,6 @@ class MainWindow(QMainWindow):
                 username=pdata.get("username", "?"),
                 is_host=pdata.get("is_host", False),
                 pixmap=self._b64_to_pixmap(pdata.get("avatar", "")))
-        self.join_screen.set_loading(False)
 
     def _on_player_joined(self, payload):
         if self._lobby:
@@ -553,25 +628,21 @@ class MainWindow(QMainWindow):
 
     def _on_error(self, payload):
         reason = payload.get("reason", "Unknown error")
-        if self._stack.currentWidget() is self.join_screen:
-            self.join_screen.show_error(reason)
-            self.join_screen.set_loading(False)
-        else:
-            from PyQt6.QtWidgets import QMessageBox
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Error")
-            dlg.setText(reason)
-            dlg.setIcon(QMessageBox.Icon.Warning)
-            dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            dlg.setStyleSheet("""
-                QMessageBox { background: #0EA5E9; }
-                QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
-                QPushButton { background: rgba(239,68,68,0.80); border:none;
+        from PyQt6.QtWidgets import QMessageBox
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Error")
+        dlg.setText(reason)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dlg.setStyleSheet("""
+              QMessageBox { background: #0EA5E9; }
+              QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+              QPushButton { background: rgba(239,68,68,0.80); border:none;
                               border-radius:10px; color:#FFFFFF; font-size:13px;
                               font-weight:700; padding:6px 28px; }
-                QPushButton:hover { background: rgba(239,68,68,0.95); }
-            """)
-            dlg.exec()
+              QPushButton:hover { background: rgba(239,68,68,0.95); }
+        """)
+        dlg.exec()
 
     def _on_host_disconnected(self):
         from PyQt6.QtWidgets import QMessageBox
@@ -650,6 +721,30 @@ class MainWindow(QMainWindow):
         # Start the cinematic reveal after Qt has rendered the screen
         QTimer.singleShot(100, self._results_screen.start_reveal)
 
+    def _on_game_error(self, payload: dict):
+        """Fatal server error — show dialog and return everyone to home."""
+        from PyQt6.QtWidgets import QMessageBox
+        reason = payload.get("reason", "An unexpected error occurred.")
+        self._stop_active_timer()
+        self._leave_game_phase()
+        self._set_fullscreen_mode(False)
+        self._disconnect_client()
+        self._go_home()
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Game Error")
+        dlg.setText(reason)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dlg.setStyleSheet("""
+            QMessageBox { background: #0EA5E9; }
+            QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+            QPushButton { background:rgba(239,68,68,0.80); border:none;
+                          border-radius:10px; color:#FFFFFF; font-size:13px;
+                          font-weight:700; padding:6px 28px; }
+            QPushButton:hover { background:rgba(239,68,68,0.95); }
+        """)
+        dlg.exec()
+
     def _on_host_next(self):
         """HOST_NEXT received — advance to next chain on this client."""
         if hasattr(self, "_results_screen") and self._results_screen:
@@ -720,12 +815,17 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Clean up browser client
+        if self._browser_client:
+            try: self._browser_client.disconnect()
+            except: pass
+
         # Shut down server (always attempt — loop may be running even if not "host")
         if self._server_loop and self._server_loop.is_running():
             from app.backend.server import shutdown_server, reset_server
             try:
                 future = asyncio.run_coroutine_threadsafe(shutdown_server(), self._server_loop)
-                future.result(timeout=1.5)
+                future.result(timeout=2.0)
             except Exception:
                 pass
             try:
@@ -743,6 +843,7 @@ class MainWindow(QMainWindow):
 
         self._disconnect_client()
         event.accept()
+        import sys; sys.exit(0)
 
     def _disconnect_client(self):
         if self._client:
