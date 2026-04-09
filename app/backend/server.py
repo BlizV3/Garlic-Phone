@@ -196,10 +196,18 @@ class GameServer:
                       avatar=payload.get("avatar", ""),
                       is_host=True)
 
-        for _ in range(20):
-            room_code = str(uuid.uuid4())[:6].upper()
-            if room_code not in self.rooms:
-                break
+        # Use custom code if provided, otherwise generate one
+        custom_code = payload.get("custom_code", "").strip().upper()
+        if custom_code and len(custom_code) >= 3:
+            if custom_code in self.rooms:
+                await websocket.send(msg.msg_error("That room code is already taken — try another"))
+                return
+            room_code = custom_code
+        else:
+            for _ in range(20):
+                room_code = str(uuid.uuid4())[:6].upper()
+                if room_code not in self.rooms:
+                    break
 
         room = Room(code=room_code, host_id=player_id)
         room.add_player(host)
@@ -370,23 +378,30 @@ class GameServer:
             await self._show_results(room)
 
     async def on_request_rooms(self, websocket, payload):
-        """Send the client a list of all open lobby rooms."""
-        rooms_data = []
-        for code, room in self.rooms.items():
-            if room.phase != GamePhase.LOBBY:
-                continue   # only show rooms still in lobby
-            host = room.players.get(room.host_id)
-            rooms_data.append({
-                "code":         code,
-                "host_username": host.username if host else "?",
-                "host_avatar":   host.avatar   if host else "",
-                "player_count":  room.player_count(),
-                "max_players":   getattr(room, "max_players", 8),
-                "requires_code": getattr(room, "requires_code", False),
-                "country":       getattr(room, "host_country", ""),
-            })
-        await websocket.send(msg.msg_room_list(rooms_data))
-        log.info(f"Sent room list ({len(rooms_data)} open rooms)")
+        """Send the client a list of all open lobby rooms. Safe for unregistered connections."""
+        try:
+            rooms_data = []
+            for code, room in list(self.rooms.items()):
+                try:
+                    if room.phase != GamePhase.LOBBY:
+                        continue
+                    host = room.players.get(room.host_id)
+                    rooms_data.append({
+                        "code":          code,
+                        "host_username": host.username if host else "?",
+                        "host_avatar":   host.avatar   if host else "",
+                        "player_count":  room.player_count(),
+                        "max_players":   getattr(room, "max_players", 8),
+                        "requires_code": getattr(room, "requires_code", False),
+                        "country":       getattr(room, "host_country", ""),
+                    })
+                except Exception as re:
+                    log.warning(f"Skipped room {code} in listing: {re}")
+            await websocket.send(msg.msg_room_list(rooms_data))
+            log.info(f"Sent room list ({len(rooms_data)} open rooms) to {websocket.remote_address}")
+        except Exception as e:
+            log.error(f"on_request_rooms failed: {e}")
+            log.error(traceback.format_exc())
 
     async def on_host_next(self, websocket, payload):
         player_id, room = self._get_player_room(websocket)

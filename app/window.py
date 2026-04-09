@@ -40,6 +40,8 @@ class MainWindow(QMainWindow):
     _sig_host_next         = pyqtSignal()
     _sig_game_error        = pyqtSignal(dict)
     _sig_room_list         = pyqtSignal(dict)
+    _sig_browser_connected = pyqtSignal()
+    _sig_browser_error     = pyqtSignal()
 
     PORT     = 8765
     ASPECT_W = 1282
@@ -91,6 +93,8 @@ class MainWindow(QMainWindow):
         self._browser_client  = None
         self._pending_code    = ""
         self._pending_req_code = False
+        self._custom_code     = ""
+        self._toast           = None
         self._max_players     = 8
         self._require_code    = True
         self._pending_code    = ""
@@ -228,6 +232,8 @@ class MainWindow(QMainWindow):
         self._sig_host_next.connect(self._on_host_next)
         self._sig_game_error.connect(self._on_game_error)
         self._sig_room_list.connect(self._on_room_list)
+        self._sig_browser_connected.connect(self._do_request_rooms)
+        self._sig_browser_error.connect(lambda: self.browser_screen.set_status("Server unavailable — try refreshing"))
 
         self._go_home()
         self._sfx.play_music_home()
@@ -362,32 +368,36 @@ class MainWindow(QMainWindow):
         """Navigate to the server browser and fetch room list."""
         self._sfx.play_music_home()
         self._stack.setCurrentWidget(self.browser_screen)
-        self.browser_screen.set_status("Connecting to server...")
-        # Connect a temp client just to fetch room list
-        self._connect_browser_client()
+        # Only connect if not already connected
+        if self._browser_client is None:
+            self.browser_screen.set_status("Connecting to server...")
+            self._connect_browser_client()
+        else:
+            # Already connected — just refresh
+            self.browser_screen.set_status("Searching for servers...")
+            self._do_request_rooms()
 
     def _connect_browser_client(self):
-        """Connect to Render just long enough to get the room list."""
+        """Connect a persistent client for browsing rooms."""
         from app.config import RENDER_URL
         from app.backend.client import GameClient
-        if self._browser_client:
-            try: self._browser_client.disconnect()
-            except: pass
         self._browser_client = GameClient()
-        self._browser_client.on(msg.ROOM_LIST,  lambda p: self._sig_room_list.emit(p))
-        self._browser_client.on(msg.ERROR,       lambda p: self.browser_screen.set_status("Connection error"))
-        self._browser_client.on("connected",     lambda p: self._browser_client.request_rooms())
+        self._browser_client.on(msg.ROOM_LIST, lambda p: self._sig_room_list.emit(p))
+        self._browser_client.on(msg.ERROR,     lambda p: self._sig_browser_error.emit())
+        self._browser_client.on("connected",   lambda p: self._sig_browser_connected.emit())
         addr = RENDER_URL if RENDER_URL else "127.0.0.1"
         self._browser_client.connect(addr, self.PORT)
 
-    def _refresh_rooms(self):
+    def _do_request_rooms(self):
         if self._browser_client:
             try:
                 self._browser_client.request_rooms()
             except Exception:
-                self._connect_browser_client()
-        else:
-            self._connect_browser_client()
+                self.browser_screen.set_status("Could not fetch servers — try refreshing")
+
+    def _refresh_rooms(self):
+        self.browser_screen.set_status("Refreshing...")
+        self._do_request_rooms()
 
     def _on_room_list(self, payload: dict):
         rooms = payload.get("rooms", [])
@@ -538,17 +548,53 @@ class MainWindow(QMainWindow):
         self._is_host      = True
         self._max_players  = max_players
         self._require_code = require_code
+        self._custom_code  = code.upper().strip() if code else ""
         self._avatar_b64   = avatar_b64
+        self._my_username  = self.create_screen._username_input.text().strip() or "Host"
 
         from app.config import RENDER_URL
         if RENDER_URL:
-            # Render mode — no local server, connect directly to Render
-            print(f"Render mode — connecting to {RENDER_URL}")
+            # Show a non-blocking "connecting" message
+            self._show_connecting_toast()
             self._connect_client(RENDER_URL, is_host=True)
         else:
-            # Local mode — start embedded server then connect
             self._start_server()
             QTimer.singleShot(600, lambda: self._connect_client("127.0.0.1", is_host=True))
+
+    def _show_connecting_toast(self):
+        """Show a small overlay message while connecting to Render."""
+        from PyQt6.QtWidgets import QLabel, QGraphicsOpacityEffect
+        if hasattr(self, "_toast") and self._toast:
+            self._toast.deleteLater()
+        outer = self.centralWidget()
+        self._toast = QLabel("Connecting to server, please wait...", outer)
+        self._toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._toast.setStyleSheet("""
+            QLabel {
+                background: rgba(0,0,0,0.75);
+                color: #FFFFFF;
+                font-size: 16px;
+                font-weight: 700;
+                border-radius: 14px;
+                padding: 14px 28px;
+            }
+        """)
+        self._toast.adjustSize()
+        # Centre it
+        self._toast.move(
+            (outer.width()  - self._toast.width())  // 2,
+            (outer.height() - self._toast.height()) // 2,
+        )
+        self._toast.show()
+        self._toast.raise_()
+        # Auto-hide after 6 seconds in case connection is slow
+        QTimer.singleShot(6000, self._hide_toast)
+
+    def _hide_toast(self):
+        if hasattr(self, "_toast") and self._toast:
+            self._toast.hide()
+            self._toast.deleteLater()
+            self._toast = None
 
     def _start_server(self):
         from app.backend.server import start_server, reset_server
@@ -584,6 +630,7 @@ class MainWindow(QMainWindow):
                 test_mode=test_mode,
                 max_players=getattr(self, "_max_players", 8),
                 requires_code=getattr(self, "_require_code", False),
+                custom_code=getattr(self, "_custom_code", ""),
             ))
 
     # ── Join flow (now handled by browser + profile screens) ──────────────
@@ -594,6 +641,7 @@ class MainWindow(QMainWindow):
     # ── Backend callbacks ──────────────────────────────────────────────────
 
     def _on_room_created(self, payload):
+        self._hide_toast()
         self._my_id = payload.get("player_id", "")
         self._sfx.play_start()
         self._go_lobby(True, payload.get("code", ""),
@@ -864,6 +912,7 @@ class MainWindow(QMainWindow):
             return px if not px.isNull() else None
         except Exception:
             return None
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

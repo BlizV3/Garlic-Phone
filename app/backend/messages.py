@@ -40,10 +40,11 @@ def parse(raw: str) -> tuple[str, dict]:
 # ── Client → Server builders ───────────────────────────────────────────────────
 
 def msg_create_room(username: str, avatar: str = "", test_mode: bool = False,
-                    max_players: int = 8, requires_code: bool = False) -> str:
+                    max_players: int = 8, requires_code: bool = False,
+                    custom_code: str = "") -> str:
     return build(CREATE_ROOM, username=username, avatar=avatar,
                  test_mode=test_mode, max_players=max_players,
-                 requires_code=requires_code)
+                 requires_code=requires_code, custom_code=custom_code)
 
 def msg_join_room(code: str, username: str, avatar: str = "") -> str:
     return build(JOIN_ROOM, code=code, username=username, avatar=avatar)
