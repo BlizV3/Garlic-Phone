@@ -143,6 +143,15 @@ class GameClient:
     def submit_drawing(self, image_b64: str):
         self._send(msg.msg_submit_drawing(image_b64))
 
+    def submit_drawing_chunked(self, image_b64: str, chunk_size: int = 256 * 1024):
+        """Split large drawings into chunks and send them one by one."""
+        import uuid as _uuid
+        chunk_id = str(_uuid.uuid4())[:8]
+        chunks   = [image_b64[i:i+chunk_size] for i in range(0, len(image_b64), chunk_size)]
+        total    = len(chunks)
+        for i, chunk in enumerate(chunks):
+            self._send(msg.msg_drawing_chunk(chunk_id, i, total, chunk))
+
     def host_continue(self, action: str):
         """action: 'continue' | 'stop'"""
         self._send(msg.msg_host_continue(action))

@@ -529,7 +529,8 @@ class MainWindow(QMainWindow):
         pixmap.save(buf, "JPEG", 85)   # JPEG at 85% — far smaller than PNG
         b64 = base64.b64encode(ba.data()).decode("utf-8")
         if self._client:
-            self._client.submit_drawing(b64)
+            # Use chunked sending — splits automatically if large, sends as one if small
+            self._client.submit_drawing_chunked(b64)
 
     # ── Create flow ────────────────────────────────────────────────────────
 
@@ -635,12 +636,12 @@ class MainWindow(QMainWindow):
         dlg.setIcon(QMessageBox.Icon.Warning)
         dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
         dlg.setStyleSheet("""
-              QMessageBox { background: #0EA5E9; }
-              QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
-              QPushButton { background: rgba(239,68,68,0.80); border:none;
-                              border-radius:10px; color:#FFFFFF; font-size:13px;
-                              font-weight:700; padding:6px 28px; }
-              QPushButton:hover { background: rgba(239,68,68,0.95); }
+            QMessageBox { background: #0EA5E9; }
+            QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+            QPushButton { background: rgba(239,68,68,0.80); border:none;
+                          border-radius:10px; color:#FFFFFF; font-size:13px;
+                          font-weight:700; padding:6px 28px; }
+            QPushButton:hover { background: rgba(239,68,68,0.95); }
         """)
         dlg.exec()
 
@@ -863,7 +864,6 @@ class MainWindow(QMainWindow):
             return px if not px.isNull() else None
         except Exception:
             return None
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

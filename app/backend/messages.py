@@ -9,6 +9,7 @@ SUBMIT_DRAWING   = "submit_drawing"
 HOST_CONTINUE    = "host_continue"    # host decides continue/stop in endless mode
 HOST_NEXT        = "host_next"        # host skips to next chain in results
 GAME_ERROR       = "game_error"       # fatal error — all players return to home
+DRAWING_CHUNK    = "drawing_chunk"    # one chunk of a large drawing submission
 REQUEST_ROOMS    = "request_rooms"    # client asks for room list
 ROOM_LIST        = "room_list"        # server sends room list
 
@@ -117,3 +118,7 @@ def msg_error(reason: str) -> str:
 
 def msg_host_disconnected() -> str:
     return build(HOST_DISCONNECTED)
+
+def msg_drawing_chunk(chunk_id: str, index: int, total: int, data: str) -> str:
+    """Send one chunk of a drawing. chunk_id groups all chunks together."""
+    return build(DRAWING_CHUNK, chunk_id=chunk_id, index=index, total=total, data=data)

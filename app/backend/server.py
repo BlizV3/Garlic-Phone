@@ -21,6 +21,8 @@ class GameServer:
         self.rooms: dict[str, Room] = {}
         # Each connection maps to (player_id, room_code)
         self.connections: dict[WebSocketServerProtocol, tuple[str, str]] = {}
+        # Chunk buffers: (player_id, chunk_id) → {index: data_str}
+        self._chunk_buffers: dict[tuple, dict] = {}
 
     async def _detect_country(self, websocket) -> str:
         """Detect country from the websocket's remote IP. Returns flag emoji + country name."""
@@ -157,6 +159,7 @@ class GameServer:
             msg.HOST_CONTINUE:   self.on_host_continue,
             msg.HOST_NEXT:       self.on_host_next,
             msg.REQUEST_ROOMS:   self.on_request_rooms,
+            msg.DRAWING_CHUNK:   self.on_drawing_chunk,
         }
 
         handler = handlers.get(msg_type)
@@ -323,6 +326,36 @@ class GameServer:
         if room.all_submitted():
             await self._advance_step(room)
 
+    async def on_drawing_chunk(self, websocket, payload):
+        """Receive one chunk of a drawing, assemble, then process when complete."""
+        player_id, room = self._get_player_room(websocket)
+        if not player_id or not room:
+            return
+
+        chunk_id = payload.get("chunk_id", "")
+        index    = payload.get("index", 0)
+        total    = payload.get("total", 1)
+        data     = payload.get("data", "")
+
+        key = (player_id, chunk_id)
+        if key not in self._chunk_buffers:
+            self._chunk_buffers[key] = {}
+        self._chunk_buffers[key][index] = data
+
+        log.info(f"Chunk {index+1}/{total} from {player_id} in room {room.code}")
+
+        if len(self._chunk_buffers[key]) == total:
+            # All chunks received — reassemble in order
+            full_image = "".join(
+                self._chunk_buffers[key][i] for i in range(total)
+            )
+            del self._chunk_buffers[key]
+            log.info(f"Drawing reassembled ({len(full_image)} chars) from {player_id}")
+
+            # Process exactly like a normal drawing submission
+            fake_payload = {"image": full_image}
+            await self.on_submit_drawing(websocket, fake_payload)
+
     async def on_host_continue(self, websocket, payload):
         player_id, room = self._get_player_room(websocket)
         if not room or player_id != room.host_id:
@@ -420,11 +453,38 @@ class GameServer:
             log.info(f"Room {room.code} → DRAW (turn {room.current_turn+1})")
 
     def _get_prompt_for(self, room: Room, player_id: str) -> str:
+        """
+        Get the content this player needs to respond to.
+        Always comes from the chain that was most recently rotated TO this player —
+        i.e. the last entry in this player's chain (put there by _record_submissions).
+        On first step of first turn there's nothing yet, return empty.
+        """
         if room.current_step == 0 and room.current_turn == 0:
             return ""
-        chain = room.chains.get(player_id)
+
+        players     = room.player_list()
+        n           = len(players)
+        step        = room.current_step
+        turn        = room.current_turn
+        steps_per   = len(room.steps_per_turn())
+        total_steps = (turn * steps_per) + step
+
+        # Find which origin chain this player is currently holding
+        idx         = next((i for i, p in enumerate(players) if p.id == player_id), 0)
+        origin_idx  = (idx - total_steps) % n
+        origin_player = players[origin_idx]
+
+        # Safety: never give a player their own first entry back
+        chain = room.chains.get(origin_player.id)
         if chain and chain.entries:
-            return chain.entries[-1].content
+            # Make sure we're not giving them their own content
+            last = chain.entries[-1]
+            if last.author_id == player_id and n > 1:
+                # Fallback — try the one before
+                if len(chain.entries) > 1:
+                    return chain.entries[-2].content
+                return ""
+            return last.content
         return ""
 
     async def _record_submissions(self, room: Room):
