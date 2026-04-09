@@ -160,6 +160,7 @@ class GameServer:
             msg.HOST_NEXT:       self.on_host_next,
             msg.REQUEST_ROOMS:   self.on_request_rooms,
             msg.DRAWING_CHUNK:   self.on_drawing_chunk,
+            msg.KICK_PLAYER:     self.on_kick_player,
         }
 
         handler = handlers.get(msg_type)
@@ -236,18 +237,29 @@ class GameServer:
             await websocket.send(msg.msg_error("Game already in progress"))
             return
 
+        # Password check
+        if getattr(room, "requires_code", False):
+            password = payload.get("password", "").strip().upper()
+            if password != code:
+                await websocket.send(msg.msg_error("Wrong password — try again"))
+                return
+
+        # Duplicate username check
+        username = payload.get("username", "Player").strip()
+        existing_names = {p.username.lower() for p in room.players.values()}
+        if username.lower() in existing_names:
+            await websocket.send(msg.msg_error(f'Username "{username}" is already taken in this room — please choose another'))
+            return
+
         player_id = str(uuid.uuid4())[:8]
-        player = Player(id=player_id,
-                        username=payload.get("username", "Player"),
-                        avatar=payload.get("avatar", ""),
-                        is_host=False)
+        player = Player(id=player_id, username=username,
+                        avatar=payload.get("avatar", ""), is_host=False)
         room.add_player(player)
         self.connections[websocket] = (player_id, code)
 
         await websocket.send(msg.msg_room_joined(room.to_dict(), player_id))
         await self.broadcast(room, msg.msg_player_joined(player.to_dict()), exclude=websocket)
-        log.info(f"{player.username} joined room {code} "
-                 f"({room.player_count()} players)")
+        log.info(f"{player.username} joined room {code} ({room.player_count()} players)")
 
     async def on_start_game(self, websocket, payload):
         player_id, room = self._get_player_room(websocket)
@@ -363,6 +375,25 @@ class GameServer:
             # Process exactly like a normal drawing submission
             fake_payload = {"image": full_image}
             await self.on_submit_drawing(websocket, fake_payload)
+
+    async def on_kick_player(self, websocket, payload):
+        player_id, room = self._get_player_room(websocket)
+        if not room or player_id != room.host_id:
+            return
+        target_id = payload.get("player_id", "")
+        if not target_id or target_id == room.host_id:
+            return
+        target_ws = self._websocket_for(target_id, room)
+        if target_ws:
+            await target_ws.send(msg.msg_kicked())
+            await target_ws.close()
+        # Remove from room
+        kicked = room.players.get(target_id)
+        if kicked:
+            room.remove_player(target_id)
+            self.connections.pop(target_ws, None)
+            await self.broadcast(room, msg.msg_player_left(target_id, kicked.username))
+            log.info(f"Host kicked {kicked.username} from room {room.code}")
 
     async def on_host_continue(self, websocket, payload):
         player_id, room = self._get_player_room(websocket)

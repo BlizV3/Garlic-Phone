@@ -84,8 +84,11 @@ class MiniAvatar(QWidget):
 
 # ── Single player slot ────────────────────────────────────────────────────────
 class PlayerSlot(QWidget):
+    kick_clicked = pyqtSignal()
+
     def __init__(self, username: str = "", is_host: bool = False,
-                 pixmap: QPixmap = None, empty: bool = False, parent=None):
+                 pixmap: QPixmap = None, empty: bool = False,
+                 show_kick: bool = False, parent=None):
         super().__init__(parent)
         self.setFixedHeight(105)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -131,6 +134,25 @@ class PlayerSlot(QWidget):
             name_widget.setStyleSheet("background: transparent; border: none;")
             name_widget.setLayout(name_row)
             layout.addWidget(name_widget, stretch=1)
+
+            if show_kick:
+                kick_btn = QPushButton("✕")
+                kick_btn.setFixedSize(36, 36)
+                kick_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                kick_btn.setToolTip(f"Kick {username}")
+                kick_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: rgba(239,68,68,0.70);
+                        border: none;
+                        border-radius: 18px;
+                        color: #FFFFFF;
+                        font-size: 16px;
+                        font-weight: 700;
+                    }}
+                    QPushButton:hover {{ background: rgba(239,68,68,0.95); }}
+                """)
+                kick_btn.clicked.connect(self.kick_clicked)
+                layout.addWidget(kick_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         else:
             ghost_lbl = QLabel("EMPTY")
             ghost_lbl.setStyleSheet(f"""
@@ -420,8 +442,9 @@ class SettingToggle(QWidget):
 
 # ── Lobby screen ──────────────────────────────────────────────────────────────
 class LobbyScreen(QWidget):
-    start_requested = pyqtSignal(dict)  # emits game_settings dict
+    start_requested = pyqtSignal(dict)
     back_requested  = pyqtSignal()
+    kick_requested  = pyqtSignal(str)   # emits player_id to kick
 
     # ── Default settings ──────────────────────────────────────────────────────
     _TIME_PRESETS = [
@@ -1152,8 +1175,10 @@ class LobbyScreen(QWidget):
                 username=player["username"],
                 is_host=player["is_host"],
                 pixmap=player.get("pixmap"),
-                empty=False
+                empty=False,
+                show_kick=(self._is_host and not player["is_host"]),
             )
+            slot.kick_clicked.connect(lambda u=player["username"], pid=player.get("player_id",""): self._on_kick(u, pid))
             self._slots_layout.addWidget(slot)
 
         # Empty slots
@@ -1161,15 +1186,36 @@ class LobbyScreen(QWidget):
         for _ in range(empty_count):
             self._slots_layout.addWidget(PlayerSlot(empty=True))
 
-        # Update count label
         self._player_count_lbl.setText(
             f"PLAYERS  {len(self._players)} / {self._max_players}"
         )
 
+    def _on_kick(self, username: str, player_id: str):
+        from PyQt6.QtWidgets import QMessageBox
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Kick Player")
+        dlg.setText(f"Are you sure you want to kick {username}?")
+        dlg.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        dlg.button(QMessageBox.StandardButton.Yes).setText("Yes, kick them")
+        dlg.button(QMessageBox.StandardButton.No).setText("No, cancel")
+        dlg.setStyleSheet("""
+            QMessageBox { background: #0EA5E9; }
+            QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+            QPushButton { background:rgba(0,0,0,0.25); border:2px solid rgba(255,255,255,0.45);
+                          border-radius:10px; color:#FFFFFF; font-size:13px;
+                          font-weight:700; padding:6px 20px; }
+            QPushButton:hover { background:rgba(0,0,0,0.45); }
+        """)
+        if dlg.exec() == QMessageBox.StandardButton.Yes:
+            self.kick_requested.emit(player_id)
+
     # ── Public API (called by window.py when server sends updates) ────────────
 
-    def add_player(self, username: str, is_host: bool = False, pixmap: QPixmap = None):
-        self._players.append({"username": username, "is_host": is_host, "pixmap": pixmap})
+    def add_player(self, username: str, is_host: bool = False,
+                   pixmap: QPixmap = None, player_id: str = ""):
+        self._players.append({"username": username, "is_host": is_host,
+                               "pixmap": pixmap, "player_id": player_id})
         self._refresh_slots()
 
     def remove_player(self, username: str):

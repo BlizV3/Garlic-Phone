@@ -12,6 +12,8 @@ GAME_ERROR       = "game_error"       # fatal error — all players return to ho
 DRAWING_CHUNK    = "drawing_chunk"    # one chunk of a large drawing submission
 REQUEST_ROOMS    = "request_rooms"    # client asks for room list
 ROOM_LIST        = "room_list"        # server sends room list
+KICK_PLAYER      = "kick_player"      # host kicks a player
+KICKED           = "kicked"           # sent to player who was kicked
 
 # ── Server → Client ────────────────────────────────────────────────────────────
 ROOM_CREATED      = "room_created"
@@ -46,8 +48,8 @@ def msg_create_room(username: str, avatar: str = "", test_mode: bool = False,
                  test_mode=test_mode, max_players=max_players,
                  requires_code=requires_code, custom_code=custom_code)
 
-def msg_join_room(code: str, username: str, avatar: str = "") -> str:
-    return build(JOIN_ROOM, code=code, username=username, avatar=avatar)
+def msg_join_room(code: str, username: str, avatar: str = "", password: str = "") -> str:
+    return build(JOIN_ROOM, code=code, username=username, avatar=avatar, password=password)
 
 def msg_start_game(settings: dict = None) -> str:
     return build(START_GAME, settings=settings or {})
@@ -75,6 +77,12 @@ def msg_request_rooms() -> str:
 
 def msg_room_list(rooms: list) -> str:
     return build(ROOM_LIST, rooms=rooms)
+
+def msg_kick_player(player_id: str) -> str:
+    return build(KICK_PLAYER, player_id=player_id)
+
+def msg_kicked(reason: str = "Host kicked you out the lobby") -> str:
+    return build(KICKED, reason=reason)
 
 
 # ── Server → Client builders ───────────────────────────────────────────────────

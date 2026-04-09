@@ -42,6 +42,8 @@ class MainWindow(QMainWindow):
     _sig_room_list         = pyqtSignal(dict)
     _sig_browser_connected = pyqtSignal()
     _sig_browser_error     = pyqtSignal()
+    _sig_kicked            = pyqtSignal(dict)
+    _sig_kicked            = pyqtSignal(dict)
 
     PORT     = 8765
     ASPECT_W = 1282
@@ -93,8 +95,11 @@ class MainWindow(QMainWindow):
         self._browser_client  = None
         self._pending_code    = ""
         self._pending_req_code = False
+        self._pending_password = ""
         self._custom_code     = ""
         self._toast           = None
+        self._pending_password = ""
+        self._lobby_players   = {}   # player_id → {username, is_host, avatar}
         self._max_players     = 8
         self._require_code    = True
         self._pending_code    = ""
@@ -234,6 +239,8 @@ class MainWindow(QMainWindow):
         self._sig_room_list.connect(self._on_room_list)
         self._sig_browser_connected.connect(self._do_request_rooms)
         self._sig_browser_error.connect(lambda: self.browser_screen.set_status("Server unavailable — try refreshing"))
+        self._sig_kicked.connect(self._on_kicked)
+        self._sig_kicked.connect(self._on_kicked)
 
         self._go_home()
         self._sfx.play_music_home()
@@ -404,10 +411,85 @@ class MainWindow(QMainWindow):
         self.browser_screen.update_rooms(rooms)
 
     def _on_room_selected(self, code: str, requires_code: bool):
-        """Player clicked a room — go to profile screen."""
-        self._pending_code      = code
-        self._pending_req_code  = requires_code
-        self._stack.setCurrentWidget(self.profile_screen)
+        """Player clicked a room — prompt password if needed, then go to profile."""
+        self._pending_code     = code
+        self._pending_req_code = requires_code
+        self._pending_password = ""
+
+        if requires_code:
+            self._show_password_prompt(code)
+        else:
+            self._stack.setCurrentWidget(self.profile_screen)
+
+    def _show_password_prompt(self, code: str):
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                      QLabel, QLineEdit, QPushButton)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Room Password")
+        dlg.setMinimumWidth(360)
+        dlg.setStyleSheet("background:#0EA5E9;")
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12); layout.setContentsMargins(24, 20, 24, 20)
+
+        lbl = QLabel(f'Room "{code}" requires a password:')
+        lbl.setStyleSheet("color:#FFFFFF;font-size:15px;font-weight:700;background:transparent;")
+        layout.addWidget(lbl)
+
+        inp = QLineEdit()
+        inp.setPlaceholderText("Enter password...")
+        inp.setFixedHeight(44)
+        inp.setStyleSheet("""
+            QLineEdit{background:rgba(255,255,255,0.18);border:2px solid rgba(255,255,255,0.35);
+            border-radius:12px;color:#FFFFFF;font-size:16px;font-weight:700;
+            padding:0 14px;letter-spacing:2px;}
+            QLineEdit:focus{border:2px solid rgba(255,255,255,0.85);}
+        """)
+        layout.addWidget(inp)
+
+        err_lbl = QLabel("")
+        err_lbl.setStyleSheet("color:#FCA5A5;font-size:13px;font-weight:600;background:transparent;")
+        err_lbl.setVisible(False)
+        layout.addWidget(err_lbl)
+
+        btn_row = QHBoxLayout()
+        cancel = QPushButton("Cancel"); cancel.setFixedHeight(40)
+        cancel.setStyleSheet("QPushButton{background:rgba(0,0,0,0.25);border:none;border-radius:10px;color:#FFF;font-size:13px;font-weight:700;padding:0 18px;}QPushButton:hover{background:rgba(0,0,0,0.45);}")
+        cancel.clicked.connect(dlg.reject)
+        ok = QPushButton("JOIN  ▶"); ok.setFixedHeight(40)
+        ok.setStyleSheet("QPushButton{background:#F97316;border:none;border-radius:10px;color:#FFF;font-size:13px;font-weight:800;padding:0 18px;}QPushButton:hover{background:#FB923C;}")
+
+        def _try():
+            pw = inp.text().strip()
+            if not pw:
+                err_lbl.setText("Please enter a password"); err_lbl.setVisible(True); return
+            self._pending_password = pw.upper()
+            dlg.accept()
+
+        ok.clicked.connect(_try); inp.returnPressed.connect(_try)
+        btn_row.addWidget(cancel); btn_row.addWidget(ok)
+        layout.addLayout(btn_row)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._stack.setCurrentWidget(self.profile_screen)
+
+    def _on_kicked(self, payload: dict):
+        reason = payload.get("reason", "Host kicked you out the lobby")
+        self._disconnect_client()
+        self._go_home()
+        from PyQt6.QtWidgets import QMessageBox
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Kicked")
+        dlg.setText(reason)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dlg.setStyleSheet("""
+            QMessageBox { background: #0EA5E9; }
+            QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+            QPushButton { background:rgba(239,68,68,0.80); border:none;
+                          border-radius:10px; color:#FFFFFF; font-size:13px;
+                          font-weight:700; padding:6px 28px; }
+        """)
+        dlg.exec()
 
     def _on_code_join(self, code: str):
         """Player typed a code directly."""
@@ -443,6 +525,7 @@ class MainWindow(QMainWindow):
         self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
         self._client.on(msg.GAME_ERROR,        lambda p: self._sig_game_error.emit(p))
         self._client.on(msg.ROOM_LIST,         lambda p: self._sig_room_list.emit(p))
+        self._client.on(msg.KICKED,            lambda p: self._sig_kicked.emit(p))
         self._client.on("connected",           lambda p: self._on_guest_connected(p))
         self._client.connect(connect_addr, self.PORT)
 
@@ -462,6 +545,7 @@ class MainWindow(QMainWindow):
         )
         self._lobby.back_requested.connect(self._go_home)
         self._lobby.start_requested.connect(self._on_start_requested)
+        self._lobby.kick_requested.connect(self._on_kick_requested)
         self._stack.addWidget(self._lobby)
         self._stack.setCurrentWidget(self._lobby)
         self._set_fullscreen_mode(False)
@@ -622,10 +706,11 @@ class MainWindow(QMainWindow):
         self._client.on(msg.HOST_NEXT,         lambda p: self._sig_host_next.emit())
         self._client.on(msg.GAME_ERROR,        lambda p: self._sig_game_error.emit(p))
         self._client.on(msg.ROOM_LIST,          lambda p: self._sig_room_list.emit(p))
+        self._client.on(msg.KICKED,            lambda p: self._sig_kicked.emit(p))
         self._client.connect(host, self.PORT)
         if is_host:
             QTimer.singleShot(400, lambda: self._client.create_room(
-                self._my_username or "Host",
+                self._my_username if self._my_username else "Host",
                 self._avatar_b64,
                 test_mode=test_mode,
                 max_players=getattr(self, "_max_players", 8),
@@ -636,43 +721,61 @@ class MainWindow(QMainWindow):
     # ── Join flow (now handled by browser + profile screens) ──────────────
 
     def _on_guest_connected(self, _):
-        self._client.join_room(self._pending_code, self._my_username, self._avatar_b64)
+        self._client.join_room(
+            self._pending_code,
+            self._my_username,
+            self._avatar_b64,
+            password=getattr(self, "_pending_password", ""),
+        )
 
     # ── Backend callbacks ──────────────────────────────────────────────────
 
     def _on_room_created(self, payload):
         self._hide_toast()
         self._my_id = payload.get("player_id", "")
+        self._lobby_players = {
+            self._my_id: {"username": self._my_username, "is_host": True}
+        }
         self._sfx.play_start()
         self._go_lobby(True, payload.get("code", ""),
                        self._max_players, self._require_code)
         self._lobby.add_player(self._my_username or "Host", is_host=True,
-                               pixmap=self._b64_to_pixmap(self._avatar_b64))
+                               pixmap=self._b64_to_pixmap(self._avatar_b64),
+                               player_id=self._my_id)
 
     def _on_room_joined(self, payload):
         self._my_id = payload.get("player_id", "")
         room = payload.get("room", {})
+        self._lobby_players = {}
         self._sfx.play_start()
         self._go_lobby(False, room.get("code", ""),
                        room.get("rounds", 8), bool(room.get("code")))
         for pid, pdata in room.get("players", {}).items():
+            self._lobby_players[pid] = pdata
             self._lobby.add_player(
                 username=pdata.get("username", "?"),
                 is_host=pdata.get("is_host", False),
-                pixmap=self._b64_to_pixmap(pdata.get("avatar", "")))
+                pixmap=self._b64_to_pixmap(pdata.get("avatar", "")),
+                player_id=pid)
 
     def _on_player_joined(self, payload):
         if self._lobby:
             p = payload.get("player", {})
+            pid = p.get("id", "")
+            if pid:
+                self._lobby_players[pid] = p
             self._sfx.play_join()
             self._lobby.add_player(
                 username=p.get("username", "?"),
                 is_host=p.get("is_host", False),
-                pixmap=self._b64_to_pixmap(p.get("avatar", "")))
+                pixmap=self._b64_to_pixmap(p.get("avatar", "")),
+                player_id=pid)
 
     def _on_player_left(self, payload):
         if self._lobby:
             self._sfx.play_click()
+            pid = payload.get("player_id", "")
+            self._lobby_players.pop(pid, None)
             self._lobby.remove_player(payload.get("username", ""))
 
     def _on_error(self, payload):
@@ -770,6 +873,29 @@ class MainWindow(QMainWindow):
         # Start the cinematic reveal after Qt has rendered the screen
         QTimer.singleShot(100, self._results_screen.start_reveal)
 
+    def _on_kicked(self, payload: dict):
+        """Server kicked this player — show message and go home."""
+        from PyQt6.QtWidgets import QMessageBox
+        reason = payload.get("reason", "Host kicked you out the lobby")
+        self._disconnect_client()
+        self._go_home()
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Kicked")
+        dlg.setText(reason)
+        dlg.setIcon(QMessageBox.Icon.Warning)
+        dlg.setStyleSheet("""
+            QMessageBox { background: #0EA5E9; }
+            QMessageBox QLabel { color:#FFFFFF; font-size:15px; font-weight:600; }
+            QPushButton { background:rgba(239,68,68,0.80); border:none;
+                          border-radius:10px; color:#FFFFFF; font-size:13px;
+                          font-weight:700; padding:6px 28px; }
+        """)
+        dlg.exec()
+
+    def _on_kick_requested(self, player_id: str):
+        if self._client:
+            self._client.kick_player(player_id)
+
     def _on_game_error(self, payload: dict):
         """Fatal server error — show dialog and return everyone to home."""
         from PyQt6.QtWidgets import QMessageBox
@@ -851,6 +977,15 @@ class MainWindow(QMainWindow):
     def _on_sentence_submitted(self, text: str):
         if self._client:
             self._client.submit_sentence(text)
+
+    def _on_kick_requested(self, username: str):
+        """Host kicked a player — find their player_id and send kick to server."""
+        if self._client and self._lobby:
+            # Find player_id from the room's player list via the room_joined payload
+            for pid, pdata in self._lobby_players.items():
+                if pdata.get("username") == username:
+                    self._client.kick_player(pid)
+                    return
 
     def _on_start_requested(self, settings: dict = None):
         if self._client:

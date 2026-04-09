@@ -134,8 +134,11 @@ class GameClient:
     def request_rooms(self):
         self._send(msg.msg_request_rooms())
 
-    def join_room(self, code: str, username: str, avatar: str = ""):
-        self._send(msg.msg_join_room(code, username, avatar))
+    def join_room(self, code: str, username: str, avatar: str = "", password: str = ""):
+        self._send(msg.msg_join_room(code, username, avatar, password=password))
+
+    def kick_player(self, player_id: str):
+        self._send(msg.msg_kick_player(player_id))
 
     def start_game(self, settings: dict = None):
         self._send(msg.msg_start_game(settings or {}))

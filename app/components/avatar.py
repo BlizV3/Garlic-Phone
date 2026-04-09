@@ -13,6 +13,7 @@ TEXT_LIGHT = "#FFFFFF"
 AVATAR_FILES = [
     "default.png", "cat.png", "dog.png",
     "hamster.png", "minion.png", "rabbit.png",
+    "duck.png"
 ]
 
 def _avatar_path(f):
