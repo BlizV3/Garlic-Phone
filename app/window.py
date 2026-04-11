@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
     _sig_browser_connected = pyqtSignal()
     _sig_browser_error     = pyqtSignal()
     _sig_kicked            = pyqtSignal(dict)
+    _sig_update_needed     = pyqtSignal(str, str)   # latest_ver, download_url
     _sig_kicked            = pyqtSignal(dict)
 
     PORT     = 8765
@@ -240,10 +241,36 @@ class MainWindow(QMainWindow):
         self._sig_browser_connected.connect(self._do_request_rooms)
         self._sig_browser_error.connect(lambda: self.browser_screen.set_status("Server unavailable — try refreshing"))
         self._sig_kicked.connect(self._on_kicked)
-        self._sig_kicked.connect(self._on_kicked)
+        self._sig_update_needed.connect(self._show_update_screen)
 
         self._go_home()
         self._sfx.play_music_home()
+
+        # Check for updates in background — non-blocking
+        self._run_version_check()
+
+    def _run_version_check(self):
+        from app.updater import VersionChecker
+        self._version_checker = VersionChecker(self)
+        self._version_checker.up_to_date.connect(lambda: print("[Version] Up to date"))
+        self._version_checker.check_failed.connect(lambda: print("[Version] Check failed — skipping"))
+        self._version_checker.update_needed.connect(
+            lambda v, u: self._sig_update_needed.emit(v, u))
+        self._version_checker.check()
+
+    def _show_update_screen(self, latest_version: str, download_url: str):
+        from app.screens.update_screen import UpdateScreen
+        from app.version import VERSION
+        if hasattr(self, "_update_screen") and self._update_screen:
+            self._stack.removeWidget(self._update_screen)
+            self._update_screen.deleteLater()
+        self._update_screen = UpdateScreen(VERSION, latest_version, download_url)
+        self._update_screen.skip_requested.connect(self._on_update_skipped)
+        self._stack.addWidget(self._update_screen)
+        self._stack.setCurrentWidget(self._update_screen)
+
+    def _on_update_skipped(self):
+        self._stack.setCurrentWidget(self.home_screen)
 
     def _on_outer_mouse_move(self, event):
         """Show gear when mouse is within 100px of the gear button centre."""

@@ -26,13 +26,10 @@ ORANGE_HOV  = "#FB923C"
 TOOL_BG     = "rgba(255,255,255,0.12)"
 TOOL_ACTIVE = "rgba(255,255,255,0.35)"
 
-ASSETS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "assets"
-)
+from app.paths import asset as _asset_path
 
 def load_icon(name: str, size: int = 28) -> QPixmap:
-    path = os.path.join(ASSETS_DIR, "icons", name)
+    path = _asset_path("icons", name)
     px   = QPixmap(path)
     if px.isNull():
         return QPixmap()
@@ -650,11 +647,8 @@ class TimerRing(QWidget):
         self._in_panic = True
         try:
             import pygame.mixer as mx
-            import os
-            path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "assets", "music", "clock_ticking.mp3"
-            )
+            from app.paths import asset
+            path = asset("music", "clock_ticking.mp3")
             mx.music.load(path)
             mx.music.play(-1)  # loop
         except Exception:
@@ -1116,8 +1110,112 @@ class DrawScreen(QWidget):
             px = self._canvas.get_pixmap()
             if not px:
                 return
+
+            # ── Styled save dialog ────────────────────────────────────────
+            from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
+                                          QLabel, QLineEdit, QPushButton)
+            from PyQt6.QtGui import QCursor
+
+            dlg = QDialog(self)
+            dlg.setWindowTitle("Save Drawing")
+            dlg.setWindowFlags(
+                dlg.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
+            )
+            dlg.setMinimumWidth(380)
+            dlg.setStyleSheet("""
+                QDialog {
+                    background: #0EA5E9;
+                    border: 2px solid rgba(255,255,255,0.35);
+                    border-radius: 20px;
+                }
+            """)
+
+            layout = QVBoxLayout(dlg)
+            layout.setContentsMargins(28, 24, 28, 24)
+            layout.setSpacing(14)
+
+            title = QLabel("💾  Save Drawing")
+            title.setStyleSheet(
+                "color:#FFFFFF; font-size:18px; font-weight:900;"
+                "background:transparent; letter-spacing:1px;")
+            layout.addWidget(title)
+
+            sub = QLabel("Give your drawing a name:")
+            sub.setStyleSheet(
+                "color:#E0F2FE; font-size:13px; font-weight:600; background:transparent;")
+            layout.addWidget(sub)
+
+            inp = QLineEdit("My Drawing")
+            inp.setFixedHeight(46)
+            inp.selectAll()
+            inp.setStyleSheet("""
+                QLineEdit {
+                    background: rgba(255,255,255,0.18);
+                    border: 2px solid rgba(255,255,255,0.35);
+                    border-radius: 14px;
+                    color: #FFFFFF;
+                    font-size: 16px;
+                    font-weight: 700;
+                    padding: 0 16px;
+                    letter-spacing: 1px;
+                }
+                QLineEdit:focus {
+                    border: 2px solid rgba(255,255,255,0.85);
+                }
+            """)
+            layout.addWidget(inp)
+
+            btn_row = QHBoxLayout()
+            btn_row.setSpacing(10)
+
+            cancel = QPushButton("Cancel")
+            cancel.setFixedHeight(44)
+            cancel.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            cancel.setStyleSheet("""
+                QPushButton {
+                    background: rgba(0,0,0,0.25);
+                    border: 2px solid rgba(255,255,255,0.25);
+                    border-radius: 13px;
+                    color: rgba(255,255,255,0.80);
+                    font-size: 14px; font-weight: 700;
+                    padding: 0 20px;
+                }
+                QPushButton:hover {
+                    background: rgba(0,0,0,0.45);
+                    color: #FFFFFF;
+                }
+            """)
+            cancel.clicked.connect(dlg.reject)
+
+            save = QPushButton("Save  💾")
+            save.setFixedHeight(44)
+            save.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            save.setStyleSheet("""
+                QPushButton {
+                    background: #F97316;
+                    border: none;
+                    border-radius: 13px;
+                    color: #FFFFFF;
+                    font-size: 14px; font-weight: 800;
+                    padding: 0 24px;
+                }
+                QPushButton:hover { background: #FB923C; }
+            """)
+            save.clicked.connect(dlg.accept)
+            inp.returnPressed.connect(dlg.accept)
+
+            btn_row.addWidget(cancel)
+            btn_row.addStretch()
+            btn_row.addWidget(save)
+            layout.addLayout(btn_row)
+
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            name = inp.text().strip() or "My Drawing"
+            # ── Save ──────────────────────────────────────────────────────
             from app.screens.photos import save_drawing
-            entry = save_drawing(px)
+            entry = save_drawing(px, name=name)
             self.saved.emit(entry)
             orig = self._prompt_label.text()
             self._prompt_label.setText("✓  Saved!")
@@ -1258,10 +1356,8 @@ if __name__ == "__main__":
     class _BG(QWidget):
         def __init__(self):
             super().__init__()
-            path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "assets", "background", "default.png"
-            )
+            from app.paths import asset as _a
+            path = _a("background", "default.png")
             self._px = QPixmap(path)
 
         def paintEvent(self, event):

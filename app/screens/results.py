@@ -401,7 +401,10 @@ class ResultsScreen(QWidget):
         # Hide next bar
         self._next_bar.setVisible(False)
         if self._countdown:
-            self._countdown.stop(); self._countdown = None
+            self._countdown.stop()
+            try: self._countdown.timeout.disconnect()
+            except: pass
+            self._countdown = None
 
         for i, tab in enumerate(self._tabs): tab.set_active(i == idx)
 
@@ -472,28 +475,27 @@ class ResultsScreen(QWidget):
         secs = self.DELAY_NEXT // 1000
         self._cnt_remaining = secs
         self._countdown_lbl.setText(f"Next in {secs}s")
-
-        # Only show next bar if there are more chains (or we're going to all_done)
         self._next_bar.setVisible(True)
 
-        # Guests: auto-advance. Host: also auto-advance unless host_control
-        # Everyone sees the Next button, but only host can click it when host_control=True
-        # Actually — Next button visible to ALL, auto-timer runs in background
+        # Stop and fully replace the timer to avoid stacked timeout connections
         if self._countdown:
             self._countdown.stop()
+            try: self._countdown.timeout.disconnect()
+            except: pass
+
         self._countdown = QTimer(self)
         self._countdown.setInterval(1000)
-
-        def _tick():
-            self._cnt_remaining -= 1
-            if self._cnt_remaining <= 0:
-                self._countdown.stop()
-                self._advance_chain()
-            else:
-                self._countdown_lbl.setText(f"Next in {self._cnt_remaining}s")
-
-        self._countdown.timeout.connect(_tick)
+        self._countdown.timeout.connect(self._countdown_tick)
         self._countdown.start()
+
+    def _countdown_tick(self):
+        self._cnt_remaining -= 1
+        if self._cnt_remaining <= 0:
+            self._countdown.stop()
+            self._next_bar.setVisible(False)
+            self._advance_chain()
+        else:
+            self._countdown_lbl.setText(f"Next in {self._cnt_remaining}s")
 
     def _on_next_clicked(self):
         """Next button clicked — if host, broadcast to all. If guest, ignore (wait for host)."""

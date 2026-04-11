@@ -125,6 +125,30 @@ class SettingsPanel(QWidget):
         """)
         layout.addWidget(test_btn)
 
+        # ── Debug console ──────────────────────────────────────────────────
+        console_btn = QPushButton("⬛  DEBUG CONSOLE")
+        console_btn.setFixedHeight(46)
+        console_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        console_btn.clicked.connect(self._on_console)
+        console_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: rgba(15,15,15,0.85);
+                border: 2px solid rgba(0,255,136,0.35);
+                border-radius: 14px;
+                color: #00FF88;
+                font-size: 15px;
+                font-weight: 800;
+                letter-spacing: 1px;
+                font-family: Consolas, monospace;
+            }}
+            QPushButton:hover {{
+                background: rgba(0,255,136,0.12);
+                border: 2px solid rgba(0,255,136,0.70);
+            }}
+        """)
+        layout.addWidget(console_btn)
+        self._console_window = None
+
         self.adjustSize()
 
         # Initial values
@@ -202,6 +226,14 @@ class SettingsPanel(QWidget):
     def _on_test_mode(self):
         self.hide()
         self.test_requested.emit()
+
+    def _on_console(self):
+        self.hide()
+        if self._console_window is None:
+            from app.screens.console import DebugConsole
+            self._console_window = DebugConsole()
+        self._console_window.show()
+        self._console_window.raise_()
 
     def _on_mode(self, mode: str):
         self._win_mode = mode

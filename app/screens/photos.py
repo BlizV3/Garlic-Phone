@@ -572,19 +572,26 @@ class PhotosScreen(QWidget):
         """)
         self._grid_widget = QWidget()
         self._grid_widget.setStyleSheet("background: transparent;")
-        self._grid = QGridLayout(self._grid_widget)
-        self._grid.setSpacing(16)
-        self._grid.setContentsMargins(0, 8, 0, 8)
-        self._scroll.setWidget(self._grid_widget)
-        root.addWidget(self._scroll, stretch=1)
+        inner_layout = QVBoxLayout(self._grid_widget)
+        inner_layout.setContentsMargins(0, 8, 0, 8)
+        inner_layout.setSpacing(0)
 
-        # Empty state
+        self._grid = QGridLayout()
+        self._grid.setSpacing(16)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        inner_layout.addLayout(self._grid)
+
+        # Empty state — lives inside scroll so layout never breaks
         self._empty_lbl = QLabel("No photos yet — go draw something!")
         self._empty_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._empty_lbl.setStyleSheet(
             f"color:{TEXT_DIM}; font-size:20px; font-weight:600; background:transparent;")
         self._empty_lbl.setVisible(False)
-        root.addWidget(self._empty_lbl)
+        inner_layout.addWidget(self._empty_lbl)
+        inner_layout.addStretch()
+
+        self._scroll.setWidget(self._grid_widget)
+        root.addWidget(self._scroll, stretch=1)
 
         self._pad_layout.addWidget(card)
         outer.addWidget(self._pad)
@@ -614,7 +621,6 @@ class PhotosScreen(QWidget):
                        or query in e.get("created", "").lower()]
 
         self._empty_lbl.setVisible(len(entries) == 0)
-        self._scroll.setVisible(len(entries) > 0)
         self._storage_lbl.setText(folder_size_str())
 
         for i, entry in enumerate(entries):
